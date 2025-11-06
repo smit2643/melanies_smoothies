@@ -1,58 +1,45 @@
+
 import streamlit as st
 import requests
-import pandas as pd
 from snowflake.snowpark.functions import col
 
+
+# Write directly to the app
 st.title(":cup_with_straw: Customize Your Smoothie :cup_with_straw:")
-st.write("Choose the fruit you want in your custom smoothie.")
+st.write(
+  """Choose the furit you want in your custom Smoothie
+  """
+)
 
-# Name input
+
 name_on_order = st.text_input("Name on Smoothie : ")
+st.write("The name on your smoothie will be : ", name_on_order)
 
-# Snowflake connection
-cnx = st.connection("snowflake")
-session = cnx.session()
 
-# Get fruit list from Snowflake
-fruit_df = session.table("SMOOTHIES.PUBLIC.FRUIT_OPTIONS").select(col("FRUIT_NAME")).to_pandas()
+cnx=st.connection("snowflake")
+session=cnx.session()
+my_dataframe = session.table("smoothies.public.fruit_options").select(col('FRUIT_NAME'))
 
 ingredients_list = st.multiselect(
-    "Choose up to 5 ingredients:",
-    fruit_df["FRUIT_NAME"].tolist(),
+    'Choose  up to 5 ingredients :'
+    ,my_dataframe,
     max_selections=5
 )
 
-# Fetch the full fruit list once (not per fruit)
-@st.cache_data
-def load_api_data():
-    url = "https://my.smoothiefroot.com/api/fruit/all"
-    return requests.get(url).json()
-
-api_data = load_api_data()
-
-# When fruits selected → filter API data
 if ingredients_list:
+    ingredients_string=''
+    for fruit_chosen in ingredients_list:
+        ingredients_string+=fruit_chosen + ' '
+        smoothiefroot_response = requests.get("https://my.smoothiefroot.com/api/fruit/watermelon")
+        sf_df=st.dataframe(data=smoothiefroot_response.json(),use_container_width=True)
+        
+    my_insert_stmt = """ insert into smoothies.public.orders(ingredients,name_on_order)
+            values ('""" + ingredients_string + """','""" + name_on_order + """')"""
 
-    # Normalize names (API uses many variations)
-    selected_info = []
-    for fruit in ingredients_list:
-        match = next((item for item in api_data if item["name"].lower().startswith(fruit.lower())), None)
-        if match:
-            selected_info.append(match)
+    time_to_insert =st.button('Submit order')
+    if time_to_insert:
+        session.sql(my_insert_stmt).collect()
+        st.success('Your Smoothie is ordered!', icon="✅")
 
-    # Convert to DataFrame
-    df = pd.json_normalize(selected_info)   # this FLATTENS the nutrition field
 
-    st.subheader("🍉 Nutrition Details for Your Selected Fruits")
-    st.dataframe(df, use_container_width=True)
 
-    # Submit to Snowflake
-    if st.button("Submit Order"):
-        ingredients_string = ", ".join(ingredients_list)
-
-        session.sql("""
-            INSERT INTO SMOOTHIES.PUBLIC.ORDERS (INGREDIENTS, NAME_ON_ORDER)
-            VALUES (%s, %s)
-        """, (ingredients_string, name_on_order)).collect()
-
-        st.success("✅ Your Smoothie is ordered!")
